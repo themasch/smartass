@@ -94,13 +94,16 @@ async fn main() {
         .model("claude-sonnet-4-20250514")
         .max_tokens(1024)
         .temperature(0.7)
+        .system([
+            "Generate a short code review for the following change.",
+           "If there is nothing wrong, do not generate any output.",
+           "Avoid commenting on things the usual linters would also find, focus on potential bugs.",
+           "For each comment, use the following template: <<< {{file}} ({{ optional line number or numbers }}): {{ commentary }} >>>"
+            ].join(" "))
         .build()
         .unwrap();
 
-    let chat = vec![
-        ChatMessage::user().content("Generate a short code review for the following change. If there is nothing wrong, do not generate any output. Avoid commenting on things the usual linters would also find, focus on potential bugs.").build(),
-        ChatMessage::user().content(output).build()
-    ];
+    let chat = vec![ChatMessage::user().content(output).build()];
 
     let output = api.chat(&chat).await.unwrap();
 
