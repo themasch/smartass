@@ -98,7 +98,7 @@ async fn main() {
         .unwrap();
 
     let chat = vec![
-        ChatMessage::user().content("Generate a short code review for the following change. If there is nothing wrong, do not generate any output").build(),
+        ChatMessage::user().content("Generate a short code review for the following change. If there is nothing wrong, do not generate any output. Avoid commenting on things the usual linters would also find, focus on potential bugs.").build(),
         ChatMessage::user().content(output).build()
     ];
 
