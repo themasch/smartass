@@ -10,3 +10,5 @@ dotenv = "0.15.0"
 ignore = "0.4.23"
 llm = { version = "1.3.2", default-features = false, features = ["anthropic", "azure_openai", "openai", "rustls-tls"] }
 tokio = { version = "1.47.1", features = ["rt-multi-thread", "net", "tracing", "macros"] }
+tracing = { version = "0.1.41", features = ["log"] }
+tracing-subscriber = { version = "0.3.19", features = ["tracing", "env-filter"] }

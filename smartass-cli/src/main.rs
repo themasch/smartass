@@ -3,6 +3,7 @@ use clap::Parser;
 use ignore::gitignore::Gitignore;
 use llm::{self, chat::ChatMessage};
 use std::{ffi::OsStr, process::Stdio};
+use tracing::warn;
 
 #[derive(Debug, clap::Parser)]
 struct Arguments {
@@ -78,7 +79,7 @@ where
 fn build_ignore_filter() -> Result<Gitignore> {
     let mut filter_builder = ignore::gitignore::GitignoreBuilder::new(std::env::current_dir()?);
     if let Some(errs) = filter_builder.add("smartass.ignore") {
-        panic!("Failed to add ignore file: {:?}", errs);
+        warn!("Failed to add ignore file: {:?}", errs);
     }
     Ok(filter_builder.build()?)
 }
@@ -96,6 +97,8 @@ fn generate_diff(from: &str, to: &str) -> Result<String> {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().context("failed to parse env file")?;
+    tracing_subscriber::fmt::init();
+
     let args = Arguments::parse();
 
     let diff = generate_diff(&args.base, &args.compare)?;
