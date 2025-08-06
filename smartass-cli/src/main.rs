@@ -45,11 +45,16 @@ fn get_change_files(from: &str, to: &str) -> Result<impl IntoIterator<Item = Str
     Ok(files)
 }
 
-fn get_diff<I, S>(from: &str, to: &str, files: I) -> Result<String>
+fn get_diff<I, S>(from: &str, to: &str, files: I) -> Result<Option<String>>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    let mut files = files.into_iter().peekable();
+    if files.peek().is_none() {
+        return Ok(None);
+    }
+
     let output = std::process::Command::new("git")
         .arg("--no-pager")
         .arg("diff")
@@ -73,7 +78,7 @@ where
         );
     }
 
-    return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    Ok(Some(String::from_utf8_lossy(&output.stdout).to_string()))
 }
 
 fn build_ignore_filter() -> Result<Gitignore> {
@@ -84,7 +89,7 @@ fn build_ignore_filter() -> Result<Gitignore> {
     Ok(filter_builder.build()?)
 }
 
-fn generate_diff(from: &str, to: &str) -> Result<String> {
+fn generate_diff(from: &str, to: &str) -> Result<Option<String>> {
     let files = get_change_files(from, to)?;
     let filter = build_ignore_filter()?;
     let filtered_files = files
@@ -102,6 +107,14 @@ async fn main() -> Result<()> {
     let args = Arguments::parse();
 
     let diff = generate_diff(&args.base, &args.compare)?;
+
+    let diff = match diff {
+        None => {
+            println!("no changes detected!");
+            return Ok(());
+        }
+        Some(diff) => diff,
+    };
 
     let api = llm::builder::LLMBuilder::new()
         .backend(llm::builder::LLMBackend::Anthropic)
