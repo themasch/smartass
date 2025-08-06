@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.98"
 clap = { version = "4.5.42", features = ["derive", "env"] }
 dotenv = "0.15.0"
 ignore = "0.4.23"

@@ -1,6 +1,8 @@
+use anyhow::{Context, Error, Result};
 use clap::Parser;
+use ignore::gitignore::Gitignore;
 use llm::{self, chat::ChatMessage};
-use std::{process::Stdio, slice};
+use std::{ffi::OsStr, process::Stdio};
 
 #[derive(Debug, clap::Parser)]
 struct Arguments {
@@ -8,8 +10,8 @@ struct Arguments {
     compare: String,
 }
 
-fn get_change_files(from: &str, to: &str) -> Result<Vec<String>, ()> {
-    let diff_cmd = std::process::Command::new("git")
+fn get_change_files(from: &str, to: &str) -> Result<impl IntoIterator<Item = String>> {
+    let output = std::process::Command::new("git")
         .arg("--no-pager")
         .arg("diff")
         .arg("--no-color")
@@ -19,14 +21,16 @@ fn get_change_files(from: &str, to: &str) -> Result<Vec<String>, ()> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let output = diff_cmd.wait_with_output().unwrap();
+        .output()
+        .with_context(|| format!("failed to exec `git diff --name-only {} {}`", from, to))?;
 
     if !output.status.success() {
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-        return Err(());
+        return Err(
+            Error::msg(String::from_utf8_lossy(&output.stderr).to_string()).context(format!(
+                "bad result from `git diff --name-only`. return code: {}",
+                output.status.code().unwrap_or_default(),
+            )),
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -35,13 +39,17 @@ fn get_change_files(from: &str, to: &str) -> Result<Vec<String>, ()> {
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .map(|l| l.to_owned())
-        .collect();
+        .collect::<Vec<_>>();
 
     Ok(files)
 }
 
-fn get_diff(from: &str, to: &str, files: Vec<&str>) -> Result<String, ()> {
-    let diff_cmd = std::process::Command::new("git")
+fn get_diff<I, S>(from: &str, to: &str, files: I) -> Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = std::process::Command::new("git")
         .arg("--no-pager")
         .arg("diff")
         .arg("--no-color")
@@ -52,45 +60,49 @@ fn get_diff(from: &str, to: &str, files: Vec<&str>) -> Result<String, ()> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let output = diff_cmd.wait_with_output().unwrap();
+        .output()
+        .with_context(|| format!("failed to exec `git diff {} {} -- <FILES>`", from, to))?;
 
     if !output.status.success() {
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-        return Err(());
+        return Err(
+            Error::msg(String::from_utf8_lossy(&output.stderr).to_string()).context(format!(
+                "bad result from `git diff`. return code: {}",
+                output.status.code().unwrap_or_default(),
+            )),
+        );
     }
 
     return Ok(String::from_utf8_lossy(&output.stdout).to_string());
 }
 
-#[tokio::main]
-async fn main() {
-    dotenv::dotenv().expect("failed to parse env file");
-    let args = Arguments::parse();
-
-    let files = dbg!(get_change_files(&args.base, &args.compare).unwrap());
-
-    let mut filter_builder =
-        ignore::gitignore::GitignoreBuilder::new(std::env::current_dir().unwrap());
+fn build_ignore_filter() -> Result<Gitignore> {
+    let mut filter_builder = ignore::gitignore::GitignoreBuilder::new(std::env::current_dir()?);
     if let Some(errs) = filter_builder.add("smartass.ignore") {
         panic!("Failed to add ignore file: {:?}", errs);
     }
-    let filter = filter_builder.build().unwrap();
+    Ok(filter_builder.build()?)
+}
 
+fn generate_diff(from: &str, to: &str) -> Result<String> {
+    let files = get_change_files(from, to)?;
+    let filter = build_ignore_filter()?;
     let filtered_files = files
-        .iter()
-        .filter(|file| filter.matched(file, false).is_none())
-        .map(|file| file.as_str())
-        .collect::<Vec<_>>();
+        .into_iter()
+        .filter(|file| filter.matched(file, false).is_none());
 
-    let output = get_diff(&args.base, &args.compare, dbg!(filtered_files)).unwrap();
-    dbg!(&output);
+    get_diff(from, to, filtered_files)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    dotenv::dotenv().context("failed to parse env file")?;
+    let args = Arguments::parse();
+
+    let diff = generate_diff(&args.base, &args.compare)?;
 
     let api = llm::builder::LLMBuilder::new()
         .backend(llm::builder::LLMBackend::Anthropic)
-        .api_key(std::env::var("CLAUDE_KEY").unwrap())
+        .api_key(std::env::var("CLAUDE_KEY").context("missing CLAUDE_KEY environment variable")?)
         .model("claude-sonnet-4-20250514")
         .max_tokens(1024)
         .temperature(0.7)
@@ -100,12 +112,12 @@ async fn main() {
            "Avoid commenting on things the usual linters would also find, focus on potential bugs.",
            "For each comment, use the following template: <<< {{file}} ({{ optional line number or numbers }}): {{ commentary }} >>>"
             ].join(" "))
-        .build()
-        .unwrap();
+        .build()?;
 
-    let chat = vec![ChatMessage::user().content(output).build()];
+    let chat = vec![ChatMessage::user().content(diff).build()];
 
-    let output = api.chat(&chat).await.unwrap();
+    let output = api.chat(&chat).await?;
 
     dbg!(output);
+    Ok(())
 }
